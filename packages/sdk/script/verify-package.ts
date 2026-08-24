@@ -26,6 +26,10 @@ try {
     const archive = join(temporary, `${name}.tgz`)
 
     if (pkg.dependencies) {
+      const unpacked = Object.keys(pkg.dependencies).filter(
+        (dependency) => dependency.startsWith("@opencode-ai/") && !archives.has(dependency),
+      )
+      if (unpacked.length > 0) throw new Error(`${pkg.name} has unpacked workspace dependencies: ${unpacked.join(", ")}`)
       pkg.dependencies = Object.fromEntries(
         Object.entries(pkg.dependencies).map(([dependency, version]) => {
           const local = archives.get(dependency)
@@ -90,7 +94,6 @@ Tool.Error satisfies Function
           moduleResolution: "NodeNext",
           strict: true,
           noEmit: true,
-          skipLibCheck: true,
           lib: ["ES2022", "DOM", "ESNext.Disposable"],
         },
         include: ["consumer.ts"],
@@ -109,7 +112,8 @@ Tool.Error satisfies Function
     ),
     Bun.write(
       join(consumer, "worker.js"),
-      `import { OpenCodeWorkerd } from "@opencode-ai/sdk/workerd"
+      `import { bodyDigest } from "@opencode-ai/core/models-dev"
+import { OpenCodeWorkerd } from "@opencode-ai/sdk/workerd"
 import { Effect } from "effect"
 
 export class OpenCodeDO {
@@ -118,6 +122,9 @@ export class OpenCodeDO {
   }
 
   fetch() {
+    if (bodyDigest("packed-workerd") !== "5fc174bf63e8dd108ebb6c53d85e7bbc4525b2f4c1c43280364cdbfd9b37aaf5") {
+      throw new Error("Packed workerd SHA-256 mismatch")
+    }
     const storage = this.state.storage
     return Effect.runPromise(
       Effect.gen(function* () {
@@ -169,7 +176,7 @@ try {
 
   const sdk = archives.get("@opencode-ai/sdk")
   if (!sdk) throw new Error("Packed SDK archive was not created")
-  await $`npm install --ignore-scripts --no-audit --no-fund --package-lock=false ${sdk} typescript@5.8.2 wrangler@4.110.0`.cwd(consumer)
+  await $`npm install --ignore-scripts --no-audit --no-fund --package-lock=false ${sdk} @types/json-schema@7.0.15 typescript@5.8.2 wrangler@4.110.0`.cwd(consumer)
   await $`node node-import.mjs`.cwd(consumer)
   await $`node_modules/.bin/tsc --noEmit`.cwd(consumer)
 
@@ -180,6 +187,8 @@ try {
   if (/createRequire\s*\(\s*import\.meta\.url\s*\)/.test(bundled)) {
     throw new Error("Packed workerd bundle contains Bun's eager Node require initializer")
   }
+  const bunGlobals = Array.from(new Set(bundled.match(/\bBun\.[A-Za-z_$][\w$]*/g) ?? []))
+  if (bunGlobals.length > 0) throw new Error(`Packed workerd bundle references Bun globals: ${bunGlobals.join(", ")}`)
   const leaked = [
     ...transpiler.scanImports(bundled)
       .filter((imported) => imported.kind !== "dynamic-import")
