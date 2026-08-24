@@ -45,10 +45,13 @@ const rewritten = await Promise.all(
     if (!output.path.endsWith(".js")) return false
     const source = await output.text()
 
-    const unsupported = source
+    const generatedUses = source
       .replace(/import\s*\{[^}]*\b__require\b[^}]*\}\s*from\s*["'][^"']+["'];/g, "")
       .replace(/export\s*\{[^}]*\b__require\b[^}]*\};/g, "")
       .replace(eagerRequire, "")
+    if (/\bnew\s+__require\s*\(/.test(generatedUses))
+      throw new Error(`Unsupported generated require constructor in ${output.path}`)
+    const unsupported = generatedUses
       .replace(/\b__require\.resolve\s*\(/g, "")
       .replace(/\b__require\s*\(/g, "")
     if (/\b__require\b/.test(unsupported)) throw new Error(`Unsupported generated require usage in ${output.path}`)
